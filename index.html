@@ -838,6 +838,16 @@ function drawerHTML(p){
   </aside></div>`;
 }
 function modalHTML(m){
+  if(m.type==='import'){const d=UI.importData||{projetos:[],orcamento:[],equipe:[]};
+    const pessoas=[...new Set((d.equipe||[]).map(u=>u.nome))];
+    const semCorr=pessoas.filter(n=>{const a=semAc(n);return !S.equipe.some(u=>semAc(u.nome)===a||semAc(u.nome).split(' ')[0]===a.split(' ')[0]);});
+    return `<div class="overlay center" data-act="close-overlay"><div class="modal" role="dialog" aria-modal="true" aria-label="Importar dados">
+    <h2>Importar dados</h2><p class="muted" style="margin:0 0 14px">O arquivo tem ${d.projetos.length} projetos e ${d.orcamento.length} lançamento${d.orcamento.length===1?'':'s'} de orçamento. Hoje o sistema tem ${S.projetos.length} projetos.</p>
+    ${semCorr.length?`<div class="err">Estas pessoas do arquivo não foram encontradas na equipe: ${esc(semCorr.join(', '))}. Os projetos delas ficarão com você. Se preferir, cancele, cadastre-as em Configurações e importe de novo.</div>`:`<div class="note" style="margin-bottom:12px">Todas as pessoas do arquivo foram encontradas na equipe.</div>`}
+    <p style="margin:0 0 8px;font-size:14px"><b>Somar</b> mantém o que já está no sistema e acrescenta os projetos do arquivo. Projetos que já foram importados antes não são duplicados, e o orçamento só entra para anos que ainda não têm lançamento.</p>
+    <p style="margin:0 0 16px;font-size:14px"><b>Substituir</b> apaga os projetos e o orçamento atuais e deixa só o que está no arquivo. A equipe e as configurações são mantidas.</p>
+    <div class="row" style="justify-content:flex-end"><button class="btn" data-act="close-modal">Cancelar</button><button class="btn danger" data-act="imp-subst">Substituir tudo</button><button class="btn primary" data-act="imp-somar">Somar aos atuais</button></div>
+  </div></div>`;}
   if(m.type==='senha')return `<div class="overlay center" data-act="close-overlay"><div class="modal" role="dialog" aria-modal="true" aria-label="Trocar minha senha" style="width:min(420px,100%)">
     <h2>Trocar minha senha</h2><p class="muted" style="margin:0 0 14px">Usuário ${esc(user().usuario||'')}</p>
     <div class="err" id="ms-err" hidden></div>
@@ -1301,24 +1311,50 @@ function bootLocal(){
   UI.f.meus=!isGestor();UI.acomp.meus=!isGestor();UI.calf.meus=!isGestor();
   render();
 }
-/* importação na nuvem: equipe atual é mantida e os responsáveis são ligados pelo nome */
+/* importação na nuvem: a equipe atual é mantida e os responsáveis são ligados pelo nome (completo ou primeiro nome, sem acento) */
+const semAc=t=>String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase();
 function importCloud(d){
   if(!isGestor()){alert('Só a gestão pode importar dados.');return;}
   d=migrate(clone(d));
-  const porNome={};S.equipe.forEach(u=>porNome[u.nome.trim().toLowerCase()]=u.id);
-  const mapa=id=>{const u=d.equipe.find(x=>x.id===id);return u?porNome[u.nome.trim().toLowerCase()]:(S.equipe.some(x=>x.id===id)?id:undefined);};
+  UI.importData=d;UI.modal={type:'import'};renderOverlay();
+}
+function aplicarImport(modo){
+  const d=UI.importData;if(!d)return;UI.importData=null;
+  const porNome={},porPrimeiro={};
+  S.equipe.forEach(u=>{porNome[semAc(u.nome)]=u.id;const p=semAc(u.nome).split(' ')[0];porPrimeiro[p]=porPrimeiro[p]===undefined?u.id:null;});
+  const mapa=id=>{
+    if(S.equipe.some(x=>x.id===id))return id;
+    const u=d.equipe.find(x=>x.id===id);if(!u)return undefined;
+    const n=semAc(u.nome);return porNome[n]||porPrimeiro[n.split(' ')[0]]||undefined;
+  };
   const semPar=new Set();
+  const atuais=new Set(S.projetos.map(p=>p.id));
+  let pulados=0;
+  const novos=[];
   d.projetos.forEach(p=>{
-    p.responsaveis=p.responsaveis.map(id=>{const m=mapa(id);if(!m)semPar.add((d.equipe.find(x=>x.id===id)||{}).nome||id);return m;}).filter(Boolean);
+    if(modo==='somar'&&atuais.has(p.id)){pulados++;return;}
+    p.responsaveis=(p.responsaveis||[]).map(id=>{const m=mapa(id);if(!m)semPar.add((d.equipe.find(x=>x.id===id)||{}).nome||id);return m;}).filter(Boolean);
+    p.responsaveis=[...new Set(p.responsaveis)];
     if(!p.responsaveis.length)p.responsaveis=[S.usuario];
     p.historico=(p.historico||[]).map(h=>Object.assign(h,{por:mapa(h.por)||S.usuario}));
+    p.criadoPor=mapa(p.criadoPor)||S.usuario;
     if(p.indicadores)p.indicadores.por=mapa(p.indicadores.por)||S.usuario;
+    novos.push(p);
   });
-  if(!confirm(`Importar ${d.projetos.length} projetos e ${d.orcamento.length} lançamentos de orçamento? Projetos e orçamento atuais na nuvem serão substituídos. A equipe atual é mantida.`))return;
-  S.projetos=d.projetos;S.orcamento=d.orcamento;
-  S.config=Object.assign(S.config,cfgGeral(d.config));if(d.config.logo)S.config.logo=d.config.logo;
+  if(modo==='substituir'){S.projetos=novos;S.orcamento=d.orcamento;}
+  else{
+    S.projetos=S.projetos.concat(novos);
+    const anos=new Set(S.orcamento.map(o=>o.ano));
+    S.orcamento=S.orcamento.concat(d.orcamento.filter(o=>!anos.has(o.ano)));
+  }
+  S.config.demandantes=[...new Set([...S.config.demandantes,...(d.config.demandantes||[])])];
+  if(d.config.logo&&!S.config.logo)S.config.logo=d.config.logo;
+  if(d.anoAtivo){S.anoAtivo=d.anoAtivo;savePrefs({ano:S.anoAtivo});}
   persist();UI.form=null;go('painel');
-  toast(semPar.size?`Importado. Sem correspondência na equipe: ${[...semPar].join(', ')}`:'Dados importados');
+  const partes=[`${novos.length} projetos importados`];
+  if(pulados)partes.push(`${pulados} já existiam e foram mantidos`);
+  if(semPar.size)partes.push(`sem correspondência na equipe: ${[...semPar].join(', ')}`);
+  toast(partes.join('. '));
 }
 
 /* ---------- calendário ---------- */
@@ -1592,6 +1628,8 @@ const ACT={
   'pp-apply':()=>{S.projetos.forEach(p=>syncAuto(p));persist();render();toast('Regras aplicadas aos projetos');},
   'export-json':()=>{download(`backup-projetos-bbasset-${today()}.json`,JSON.stringify(S,null,1),'application/json');toast('Cópia exportada');},
   'import-json':()=>$('#import-file').click(),
+  'imp-somar':()=>{UI.modal=null;aplicarImport('somar');},
+  'imp-subst':()=>{if(!confirm('Apagar os projetos e o orçamento atuais e ficar só com os do arquivo?'))return;UI.modal=null;aplicarImport('substituir');},
   'logo-pick':()=>$('#logo-file').click(),
   'logo-del':()=>{if(!confirm('Remover o logotipo?'))return;delete S.config.logo;persist();render();},
   'load-demo':()=>{if(CLOUD)return;if(!confirm('Substituir os dados atuais pelos dados de exemplo?'))return;S=demo();persist();UI.form=null;go('painel');},
