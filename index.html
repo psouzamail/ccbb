@@ -609,7 +609,7 @@ const NATMAP=Object.fromEntries(NAT.map(x=>[x.id,x]));
 const ETAPAS=['Em execução','Concluído','Cancelado'];
 /* etapas antigas (Prospecção, Em análise, Aprovado, Contratado) passam a ser lidas como Em execução, sem apagar nada */
 const etapaN=e=>e==='Concluído'||e==='Cancelado'?e:'Em execução';
-const VERSAO='2.0';
+const VERSAO='2.1';
 const GAT={assinatura:'a assinatura',inicio:'o início do evento',fim:'o término do evento'};
 const CORES=['#465EFF','#1597B5','#7C8AFF','#2F43D9','#0E7490','#5B6BD6'];
 function natOptions(sel){
@@ -960,7 +960,7 @@ function drawerHTML(p){
   const per=p.datas.inicio?(p.datas.fim&&p.datas.fim!==p.datas.inicio?`${fd(p.datas.inicio)} a ${fd(p.datas.fim)}`:fd(p.datas.inicio)):'Sem data';
   let ind;
   if(indPreenchido(p)){const m=metricas(tot,p.indicadores);
-    ind=`<div class="metrics">${[['Público',n0(m.pub)+' pessoas'],['Empregos diretos',n0(m.emp)],['Novos seguidores',n0(m.seg)],['Custo por participante',m.cpp!=null?brl2(m.cpp):'—']].map(([l,v])=>`<div class="metric"><div class="l">${l}</div><div class="v num">${v}</div></div>`).join('')}</div>`;}
+    ind=`<div class="metrics">${[['Público',m.na.publico?NA_HTML:n0(m.pub)+' pessoas'],['Empregos diretos',m.na.empregos?NA_HTML:n0(m.emp)],['Novos seguidores',m.na.redes?NA_HTML:n0(m.seg)],['Custo por participante',m.na.publico?NA_HTML:m.cpp!=null?brl2(m.cpp):'—']].map(([l,v])=>`<div class="metric"><div class="l">${l}</div><div class="v num">${v}</div></div>`).join('')}</div>`;}
   else if(indDevido(p))ind=`<div class="note" style="background:var(--warn-soft)">O evento terminou em ${fd(fimEvento(p))}. Os indicadores ainda não foram preenchidos.</div>`;
   else ind=`<div class="muted" style="font-size:14px">Os indicadores são pedidos depois do término do evento${fimEvento(p)?` (${fd(fimEvento(p))})`:''}. Você pode preencher antes, se já tiver os números.</div>`;
   return `<div class="overlay" data-act="close-overlay"><aside class="drawer" role="dialog" aria-modal="true" aria-label="${esc(p.nome)}">
@@ -1197,20 +1197,32 @@ VIEW_FN.acompanhamento=function(){
 };
 
 /* ---------- indicadores ---------- */
+/* grupos que podem ser marcados como "não se aplica": o grupo marcado sai das médias e dos totais de resultado */
+const GRUPOS_IND=[
+  {k:'publico',t:'Público',campos:['publico']},
+  {k:'empregos',t:'Empregos',campos:['empregosDiretos','empregosIndiretos']},
+  {k:'redes',t:'Redes sociais',campos:['seg.instagram','seg.youtube','seg.linkedin']},
+  {k:'visib',t:'Visibilidade e negócios',campos:['alcance','midia','leads']}];
+const GRUPO_T=Object.fromEntries(GRUPOS_IND.map(g=>[g.k,g.t]));
+const naGrupo=(i,k)=>!!(i&&i.na&&i.na[k]);
+const naLista=i=>GRUPOS_IND.filter(g=>naGrupo(i,g.k)).map(g=>g.k);
+const naTexto=i=>naLista(i).map(k=>GRUPO_T[k]).join(', ');
+const NA_HTML='<span class="muted" style="font-weight:600">Não se aplica</span>';
 function metricas(inv,i){
   i=i||{};const sg=i.seg||{};
-  const seg=(+sg.instagram||0)+(+sg.youtube||0)+(+sg.linkedin||0);
-  const pub=+i.publico||0,emp=+i.empregosDiretos||0,alc=+i.alcance||0,leads=+i.leads||0;
-  return{inv,pub,emp,ei:+i.empregosIndiretos||0,seg,ig:+sg.instagram||0,yt:+sg.youtube||0,li:+sg.linkedin||0,alc,midia:+i.midia||0,leads,
-    cpp:pub?inv/pub:null,cpe:emp?inv/emp:null,emp100:inv&&emp?emp/(inv/1e5):null,cps:seg?inv/seg:null,cpm:alc?inv/alc*1000:null,cpl:leads?inv/leads:null};
+  const na={publico:naGrupo(i,'publico'),empregos:naGrupo(i,'empregos'),redes:naGrupo(i,'redes'),visib:naGrupo(i,'visib')};
+  const seg=na.redes?0:(+sg.instagram||0)+(+sg.youtube||0)+(+sg.linkedin||0);
+  const pub=na.publico?0:+i.publico||0,emp=na.empregos?0:+i.empregosDiretos||0,alc=na.visib?0:+i.alcance||0,leads=na.visib?0:+i.leads||0;
+  return{inv,na,pub,emp,ei:na.empregos?0:+i.empregosIndiretos||0,seg,ig:na.redes?0:+sg.instagram||0,yt:na.redes?0:+sg.youtube||0,li:na.redes?0:+sg.linkedin||0,alc,midia:na.visib?0:+i.midia||0,leads,
+    cpp:pub?inv/pub:null,cpe:emp?inv/emp:null,emp100:!na.empregos&&inv?emp/(inv/1e5):null,cps:seg?inv/seg:null,cpm:alc?inv/alc*1000:null,cpl:leads?inv/leads:null};
 }
 function mediaCarteira(excl){
   const ps=S.projetos.filter(p=>ativo(p)&&indPreenchido(p)&&p.id!==excl);
-  const s={inv:0,pub:0,emp:0,seg:0,alc:0,leads:0,invPub:0,invEmp:0,invSeg:0,invAlc:0,invLeads:0};
+  const s={inv:0,pub:0,emp:0,seg:0,alc:0,leads:0,invPub:0,invEmp:0,invSeg:0,invAlc:0,invLeads:0,empA:0,invEmpA:0};
   ps.forEach(p=>{const m=metricas(valor(p),p.indicadores);
-    if(m.pub){s.pub+=m.pub;s.invPub+=m.inv;} if(m.emp){s.emp+=m.emp;s.invEmp+=m.inv;}
+    if(m.pub){s.pub+=m.pub;s.invPub+=m.inv;} if(m.emp){s.emp+=m.emp;s.invEmp+=m.inv;} if(!m.na.empregos&&m.inv){s.empA+=m.emp;s.invEmpA+=m.inv;}
     if(m.seg){s.seg+=m.seg;s.invSeg+=m.inv;} if(m.alc){s.alc+=m.alc;s.invAlc+=m.inv;} if(m.leads){s.leads+=m.leads;s.invLeads+=m.inv;}});
-  return{n:ps.length,cpp:s.pub?s.invPub/s.pub:null,cpe:s.emp?s.invEmp/s.emp:null,emp100:s.invEmp?s.emp/(s.invEmp/1e5):null,cps:s.seg?s.invSeg/s.seg:null,cpm:s.alc?s.invAlc/s.alc*1000:null,cpl:s.leads?s.invLeads/s.leads:null};
+  return{n:ps.length,nNa:ps.filter(p=>naLista(p.indicadores).length).length,cpp:s.pub?s.invPub/s.pub:null,cpe:s.emp?s.invEmp/s.emp:null,emp100:s.invEmpA?s.empA/(s.invEmpA/1e5):null,cps:s.seg?s.invSeg/s.seg:null,cpm:s.alc?s.invAlc/s.alc*1000:null,cpl:s.leads?s.invLeads/s.leads:null};
 }
 function cmpTxt(v,ref,lowerBetter=true){
   if(v==null)return '<div class="c muted">Preencha os dados para calcular</div>';
@@ -1221,28 +1233,38 @@ function cmpTxt(v,ref,lowerBetter=true){
 }
 function calcHTML(p,draft){
   const m=metricas(valor(p),draft),md=mediaCarteira(p.id);
+  const fora='<div class="c muted">Fora das médias</div>';
+  const L=(g,l,v,c)=>m.na[g]?[l,NA_HTML,fora]:[l,v,c];
   const it=[['Investimento no projeto',brl(m.inv),'<div class="c muted">Soma das rubricas</div>'],
-    ['Custo por participante',m.cpp!=null?brl2(m.cpp):'—',cmpTxt(m.cpp,md.cpp)],
-    ['Investimento por emprego direto',m.cpe!=null?brl(m.cpe):'—',cmpTxt(m.cpe,md.cpe)],
-    ['Empregos diretos por R$ 100 mil',m.emp100!=null?m.emp100.toLocaleString('pt-BR',{maximumFractionDigits:1}):'—',cmpTxt(m.emp100,md.emp100,false)],
-    ['Custo por novo seguidor',m.cps!=null?brl2(m.cps):'—',cmpTxt(m.cps,md.cps)],
-    ['Custo por mil pessoas alcançadas',m.cpm!=null?brl2(m.cpm):'—',cmpTxt(m.cpm,md.cpm)],
-    ['Custo por contato comercial',m.cpl!=null?brl2(m.cpl):'—',cmpTxt(m.cpl,md.cpl)]];
+    L('publico','Custo por participante',m.cpp!=null?brl2(m.cpp):'—',cmpTxt(m.cpp,md.cpp)),
+    L('empregos','Investimento por emprego direto',m.cpe!=null?brl(m.cpe):'—',cmpTxt(m.cpe,md.cpe)),
+    L('empregos','Empregos diretos por R$ 100 mil',m.emp100!=null?m.emp100.toLocaleString('pt-BR',{maximumFractionDigits:1}):'—',cmpTxt(m.emp100,md.emp100,false)),
+    L('redes','Custo por novo seguidor',m.cps!=null?brl2(m.cps):'—',cmpTxt(m.cps,md.cps)),
+    L('visib','Custo por mil pessoas alcançadas',m.cpm!=null?brl2(m.cpm):'—',cmpTxt(m.cpm,md.cpm)),
+    L('visib','Custo por contato comercial',m.cpl!=null?brl2(m.cpl):'—',cmpTxt(m.cpl,md.cpl))];
   return `<div class="metrics">${it.map(([l,v,c])=>`<div class="metric"><div class="l">${l}</div><div class="v num">${v}</div>${c}</div>`).join('')}</div>
-  <p class="hint" style="margin-top:10px">A média da carteira considera ${md.n} projeto${md.n===1?'':'s'} com indicadores preenchidos. Nos custos, ficar abaixo da média é melhor.</p>`;
+  <p class="hint" style="margin-top:10px">A média da carteira considera ${md.n} projeto${md.n===1?'':'s'} com indicadores preenchidos${md.nNa?`; em ${md.nNa}, os grupos marcados como não se aplica ficam de fora`:''}. Nos custos, ficar abaixo da média é melhor.</p>`;
 }
 function indForm(p){
-  if(!UI.indDraft||UI.indDraft._pid!==p.id){UI.indDraft=Object.assign({publico:'',empregosDiretos:'',empregosIndiretos:'',seg:{instagram:'',youtube:'',linkedin:''},alcance:'',midia:'',leads:'',obs:''},clone(p.indicadores||{}),{_pid:p.id});UI.indDraft.seg=Object.assign({instagram:'',youtube:'',linkedin:''},UI.indDraft.seg||{});}
+  if(!UI.indDraft||UI.indDraft._pid!==p.id){UI.indDraft=Object.assign({publico:'',empregosDiretos:'',empregosIndiretos:'',seg:{instagram:'',youtube:'',linkedin:''},alcance:'',midia:'',leads:'',obs:''},clone(p.indicadores||{}),{_pid:p.id});UI.indDraft.seg=Object.assign({instagram:'',youtube:'',linkedin:''},UI.indDraft.seg||{});UI.indDraft.na=Object.assign({},UI.indDraft.na||{});
+    /* campos de um grupo "não se aplica" ficam vazios no rascunho */
+    GRUPOS_IND.forEach(g=>g.campos.forEach(c=>{const k=c.split('.');if(k.length>1){if(UI.indDraft[k[0]][k[1]]==null)UI.indDraft[k[0]][k[1]]='';}else if(UI.indDraft[k[0]]==null)UI.indDraft[k[0]]='';}));}
   const d=UI.indDraft,pode=podeEditar(p),dis=pode?'':'disabled';
-  const F=(k,l,h='')=>{const v=k.split('.').reduce((o,x)=>o?.[x],d);return `<div class="field"><label for="i-${k}">${l}</label><input id="i-${k}" type="number" min="0" step="1" inputmode="numeric" data-ind="${k}" value="${esc(v??'')}" ${dis}>${h?`<span class="hint">${h}</span>`:''}</div>`;};
+  const grupoDe=k=>(GRUPOS_IND.find(g=>g.campos.includes(k))||{}).k;
+  const F=(k,l,h='')=>{const v=k.split('.').reduce((o,x)=>o?.[x],d),na=!!d.na[grupoDe(k)];return `<div class="field"${na?' style="opacity:.45"':''}><label for="i-${k}">${l}</label><input id="i-${k}" type="number" min="0" step="1" inputmode="numeric" data-ind="${k}" value="${na?'':esc(v??'')}" ${dis||na?'disabled':''}>${h?`<span class="hint">${h}</span>`:''}</div>`;};
+  const H=(g,t)=>`<div class="row" style="justify-content:space-between;align-items:center;margin:20px 0 10px;flex-wrap:nowrap"><h3 class="subh" style="margin:0">${t}</h3><label class="ck" style="flex:none;font-size:14px;font-weight:600;color:var(--${d.na[g]?'azul':'muted'})"><input type="checkbox" data-indna="${g}" ${d.na[g]?'checked':''} ${dis}>Não se aplica</label></div>${d.na[g]?'<p class="hint" style="margin:-4px 0 10px">Este grupo não entra nas médias nem nos totais de resultado.</p>':''}`;
+  const todosNa=GRUPOS_IND.every(g=>d.na[g.k]);
   return `<h2 style="margin:0 0 4px;font-size:18px">${esc(p.nome)}</h2>
   <div class="row tight" style="margin-bottom:6px">${etapaPill(p.etapa)}<span class="muted" style="font-size:13px">Evento: ${p.datas.inicio?fd(p.datas.inicio)+(p.datas.fim&&p.datas.fim!==p.datas.inicio?' a '+fd(p.datas.fim):''):'sem data'}</span>${indPreenchido(p)?`<span class="muted" style="font-size:13px">Preenchido em ${fd(p.indicadores.preenchidoEm)} por ${esc(nome(p.indicadores.por))}</span>`:''}</div>
   ${pode?'':'<div class="note" style="margin:10px 0">Somente leitura: só os responsáveis e a gestão alteram os indicadores.</div>'}
-  <h3 class="subh">Público e empregos</h3>
-  <div class="grid g3">${F('publico','Público do evento','Pessoas presentes ou participantes')}${F('empregosDiretos','Empregos diretos')}${F('empregosIndiretos','Empregos indiretos','Opcional')}</div>
-  <h3 class="subh">Novos seguidores conquistados</h3>
+  ${pode?`<div class="note" style="margin:12px 0 0;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap"><span>Algum grupo não faz sentido para este evento? Marque <b>Não se aplica</b> no grupo. Ele sai das médias, e a pendência é concluída ao salvar.</span><button class="btn sm" data-act="ind-na-todos" data-v="${todosNa?'0':'1'}">${todosNa?'Desmarcar todos':'Nenhum se aplica'}</button></div>`:''}
+  ${H('publico','Público')}
+  <div class="grid g3">${F('publico','Público do evento','Pessoas presentes ou participantes')}</div>
+  ${H('empregos','Geração de empregos')}
+  <div class="grid g3">${F('empregosDiretos','Empregos diretos')}${F('empregosIndiretos','Empregos indiretos','Opcional')}</div>
+  ${H('redes','Novos seguidores nas redes sociais')}
   <div class="grid g3">${F('seg.instagram','Instagram')}${F('seg.youtube','YouTube')}${F('seg.linkedin','LinkedIn')}</div>
-  <h3 class="subh">Visibilidade e negócios</h3>
+  ${H('visib','Visibilidade e negócios')}
   <div class="grid g3">${F('alcance','Pessoas alcançadas','Alcance ou impressões nas redes e mídia')}${F('midia','Matérias na imprensa','Mídia espontânea')}${F('leads','Contatos comerciais','Leads ou clientes atendidos')}</div>
   <div class="field" style="margin-top:12px"><label for="i-obs">Observações</label><textarea id="i-obs" data-ind="obs" ${dis} placeholder="Fonte dos números, contrapartidas entregues, destaques">${esc(d.obs||'')}</textarea></div>
   <h3 class="subh">Cálculos automáticos</h3><div id="indcalc">${calcHTML(p,d)}</div>
@@ -1250,27 +1272,27 @@ function indForm(p){
 }
 VIEW_FN.indicadores=function(){
   const all=projAno().filter(ativo),filled=all.filter(indPreenchido);
-  const ag={inv:0,pub:0,emp:0,seg:0,invPub:0};
-  filled.forEach(p=>{const m=metricas(valor(p),p.indicadores);ag.inv+=m.inv;ag.pub+=m.pub;ag.emp+=m.emp;ag.seg+=m.seg;if(m.pub)ag.invPub+=m.inv;});
-  const groups={pend:all.filter(p=>indDevido(p)&&!indPreenchido(p)),ok:filled,fut:all.filter(p=>!indDevido(p)&&!indPreenchido(p)),all};
+  const ag={inv:0,pub:0,emp:0,seg:0,invPub:0,invEmp:0};
+  filled.forEach(p=>{const m=metricas(valor(p),p.indicadores);ag.inv+=m.inv;ag.pub+=m.pub;ag.emp+=m.emp;ag.seg+=m.seg;if(m.pub)ag.invPub+=m.inv;if(!m.na.empregos)ag.invEmp+=m.inv;});
+  const groups={pend:all.filter(p=>indDevido(p)&&!indPreenchido(p)),ok:filled,fut:all.filter(p=>!indDevido(p)&&!indPreenchido(p)),na:filled.filter(p=>naLista(p.indicadores).length),all};
   const list=groups[UI.indF]||all;
   const sel=UI.indSel&&S.projetos.find(p=>p.id===UI.indSel);
-  const st=p=>indPreenchido(p)?pill('ok','Preenchido'):indDevido(p)?pill('bad','Pendente'):pill('neutral','Após o evento');
-  const rank=filled.map(p=>({p,m:metricas(valor(p),p.indicadores)})).sort((a,b)=>(a.m.cpp??1e12)-(b.m.cpp??1e12));
+  const st=p=>indPreenchido(p)?(naLista(p.indicadores).length?`<span title="Não se aplica: ${esc(naTexto(p.indicadores))}">${pill('ok',naLista(p.indicadores).length===GRUPOS_IND.length?'Não se aplica':'Preenchido*')}</span>`:pill('ok','Preenchido')):indDevido(p)?pill('bad','Pendente'):pill('neutral','Após o evento');
+  const rank=filled.filter(p=>naLista(p.indicadores).length<GRUPOS_IND.length).map(p=>({p,m:metricas(valor(p),p.indicadores)})).sort((a,b)=>(a.m.cpp??1e12)-(b.m.cpp??1e12));
   return `<div class="strip">
     <div><div class="l">Público total</div><div class="v num">${n0(ag.pub)}</div><div class="s">${filled.length} projeto${filled.length===1?'':'s'} com indicadores</div></div>
-    <div><div class="l">Empregos diretos</div><div class="v num">${n0(ag.emp)}</div><div class="s">${ag.inv?(ag.emp/(ag.inv/1e5)).toLocaleString('pt-BR',{maximumFractionDigits:1})+' por R$ 100 mil':'—'}</div></div>
+    <div><div class="l">Empregos diretos</div><div class="v num">${n0(ag.emp)}</div><div class="s">${ag.invEmp?(ag.emp/(ag.invEmp/1e5)).toLocaleString('pt-BR',{maximumFractionDigits:1})+' por R$ 100 mil':'—'}</div></div>
     <div><div class="l">Novos seguidores</div><div class="v num">${n0(ag.seg)}</div><div class="s">Instagram, YouTube e LinkedIn</div></div>
     <div><div class="l">Custo médio por participante</div><div class="v num">${ag.pub?brl2(ag.invPub/ag.pub):'—'}</div><div class="s">${groups.pend.length} preenchimento${groups.pend.length===1?'':'s'} pendente${groups.pend.length===1?'':'s'}</div></div>
   </div>
   <div class="ind-layout">
-    <div class="card"><div class="seg" style="display:flex;flex-wrap:wrap">${[['pend','Pendentes'],['ok','Preenchidos'],['fut','Futuros'],['all','Todos']].map(([k,l])=>`<button class="${UI.indF===k?'on':''}" data-act="ind-f" data-k="${k}">${l} (${groups[k].length})</button>`).join('')}</div>
-      <div class="ilist">${list.map(p=>`<button class="${sel&&sel.id===p.id?'on':''}" data-act="ind-sel" data-id="${p.id}"><span><b>${esc(p.nome)}</b><small>${fimEvento(p)?'Término '+fd(fimEvento(p)):'Sem data'}</small></span>${st(p)}</button>`).join('')||'<div class="empty">Nenhum projeto neste grupo.</div>'}</div></div>
+    <div class="card"><div class="seg" style="display:flex;flex-wrap:wrap">${[['pend','Pendentes'],['ok','Preenchidos'],['na','Não se aplica'],['fut','Futuros'],['all','Todos']].map(([k,l])=>`<button class="${UI.indF===k?'on':''}" data-act="ind-f" data-k="${k}">${l} (${groups[k].length})</button>`).join('')}</div>
+      <div class="ilist">${list.map(p=>`<button class="${sel&&sel.id===p.id?'on':''}" data-act="ind-sel" data-id="${p.id}"><span><b>${esc(p.nome)}</b><small>${UI.indF==='na'?'Não se aplica: '+esc(naTexto(p.indicadores)):fimEvento(p)?'Término '+fd(fimEvento(p)):'Sem data'}</small></span>${st(p)}</button>`).join('')||'<div class="empty">Nenhum projeto neste grupo.</div>'}</div>${groups.na.length?'<p class="hint" style="margin:10px 0 0">* Preenchido com algum grupo marcado como não se aplica.</p>':''}</div>
     <div class="card" id="indform">${sel?indForm(sel):'<div class="empty"><b>Escolha um projeto na lista.</b>Depois do evento, registre público, empregos e seguidores. Os custos por resultado são calculados na hora.</div>'}</div>
   </div>
   <div class="card mt"><h2>Comparativo entre projetos<small>ordenado pelo menor custo por participante</small></h2>
   ${rank.length?`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Projeto</th><th class="r">Investimento</th><th class="r">Público</th><th class="r">Custo por participante</th><th class="r">Empregos diretos</th><th class="r">Por emprego</th><th class="r">Seguidores</th><th class="r">Por seguidor</th></tr></thead><tbody>
-  ${rank.map(({p,m})=>`<tr class="click" data-act="ind-sel" data-id="${p.id}"><td style="font-weight:700">${esc(p.nome)}</td><td class="r num">${brl(m.inv)}</td><td class="r num">${n0(m.pub)}</td><td class="r num">${m.cpp!=null?brl2(m.cpp):'—'}</td><td class="r num">${n0(m.emp)}</td><td class="r num">${m.cpe!=null?brl(m.cpe):'—'}</td><td class="r num">${n0(m.seg)}</td><td class="r num">${m.cps!=null?brl2(m.cps):'—'}</td></tr>`).join('')}
+  ${rank.map(({p,m})=>{const na='<td class="r muted" style="font-size:13px">não se aplica</td>';return `<tr class="click" data-act="ind-sel" data-id="${p.id}"><td style="font-weight:700">${esc(p.nome)}</td><td class="r num">${brl(m.inv)}</td>${m.na.publico?na+na:`<td class="r num">${n0(m.pub)}</td><td class="r num">${m.cpp!=null?brl2(m.cpp):'—'}</td>`}${m.na.empregos?na+na:`<td class="r num">${n0(m.emp)}</td><td class="r num">${m.cpe!=null?brl(m.cpe):'—'}</td>`}${m.na.redes?na+na:`<td class="r num">${n0(m.seg)}</td><td class="r num">${m.cps!=null?brl2(m.cps):'—'}</td>`}</tr>`;}).join('')}
   </tbody></table></div>`:'<div class="empty">Os projetos aparecem aqui quando os indicadores forem preenchidos.</div>'}</div>`;
 };
 
@@ -1707,7 +1729,7 @@ const numBR=v=>(+v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFr
 function csvProjetos(){
   const list=UI.view==='projetos'?filtrar(projAno(),UI.f):projAno();
   const head=['Projeto','Ano','Etapa','Área demandante','Localidades','Responsáveis','Naturezas','Valor','Pequenas Despesas (valor)','Meses de Pequenas Despesas','Assinatura','Início','Término','Progresso %','Próxima pendência','Data da pendência','Público','Empregos diretos','Novos seguidores'];
-  const rows=list.map(p=>{const x=proxPend(p),m=metricas(valor(p),p.indicadores);return[p.nome,p.ano,p.etapa,p.demandante,p.localidades.join(', '),p.responsaveis.map(nome).join(', '),natsDoProjeto(p).map(n=>NATMAP[n].nome).join(', '),numBR(valor(p)),numBR(valorPD(p)),mesesPD(p).join(', '),fd(p.datas.assinatura),fd(p.datas.inicio),fd(p.datas.fim),p.progresso,x?x.titulo:'',x?fd(x.data):'',indPreenchido(p)?m.pub:'',indPreenchido(p)?m.emp:'',indPreenchido(p)?m.seg:''];});
+  const rows=list.map(p=>{const x=proxPend(p),m=metricas(valor(p),p.indicadores);return[p.nome,p.ano,p.etapa,p.demandante,p.localidades.join(', '),p.responsaveis.map(nome).join(', '),natsDoProjeto(p).map(n=>NATMAP[n].nome).join(', '),numBR(valor(p)),numBR(valorPD(p)),mesesPD(p).join(', '),fd(p.datas.assinatura),fd(p.datas.inicio),fd(p.datas.fim),p.progresso,x?x.titulo:'',x?fd(x.data):'',indPreenchido(p)?(m.na.publico?'não se aplica':m.pub):'',indPreenchido(p)?(m.na.empregos?'não se aplica':m.emp):'',indPreenchido(p)?(m.na.redes?'não se aplica':m.seg):''];});
   download(`projetos-${S.anoAtivo}.csv`,'\ufeff'+[head,...rows].map(r=>r.map(csvCell).join(';')).join('\n'),'text/csv;charset=utf-8');
 }
 function csvRubricas(){
@@ -1875,10 +1897,10 @@ async function gerarPPT(){
       const ms=base.map(p=>({p,m:metricas(valor(p),p.indicadores)}));
       const pub=ms.reduce((a,x)=>a+x.m.pub,0),emp=ms.reduce((a,x)=>a+x.m.emp,0),leads=ms.reduce((a,x)=>a+x.m.leads,0),seg=ms.reduce((a,x)=>a+x.m.seg,0);
       const invPub=ms.filter(x=>x.m.pub).reduce((a,x)=>a+x.m.inv,0);
-      [[n0(pub),'Público',`${base.length} projeto${base.length===1?'':'s'}`,PC.blue],[n0(emp),'Empregos diretos','',PC.ok],[n0(seg),'Novos seguidores',leads?`${n0(leads)} contatos comerciais`:'',PC.navy],[pub?brl2(invPub/pub):'—','Custo médio por participante','','E3BD00']]
+      [[n0(pub),'Público',(c=>`${c} projeto${c===1?'':'s'}`)(base.filter(p=>!naGrupo(p.indicadores,'publico')).length),PC.blue],[n0(emp),'Empregos diretos','',PC.ok],[n0(seg),'Novos seguidores',leads?`${n0(leads)} contatos comerciais`:'',PC.navy],[pub?brl2(invPub/pub):'—','Custo médio por participante','','E3BD00']]
         .forEach((k,i)=>kpi(s,0.6+i*3.06,1.5,2.9,k[0],k[1],k[2],k[3]));
       const top=ms.sort((a,b)=>b.m.pub-a.m.pub).slice(0,8);
-      tabela(s,['Projeto','Público','Empregos diretos','Investimento','Custo por participante'],top.map(({p,m})=>[p.nome.length>60?p.nome.slice(0,58)+'…':p.nome,n0(m.pub),n0(m.emp),brl(m.inv),m.cpp!=null?brl2(m.cpp):'—']),[5.4,1.4,1.7,1.8,1.8],3.2,{align:['left','right','right','right','right']});}}
+      tabela(s,['Projeto','Público','Empregos diretos','Investimento','Custo por participante'],top.map(({p,m})=>[p.nome.length>60?p.nome.slice(0,58)+'…':p.nome,m.na.publico?'n/a':n0(m.pub),m.na.empregos?'n/a':n0(m.emp),brl(m.inv),m.na.publico?'n/a':m.cpp!=null?brl2(m.cpp):'—']),[5.4,1.4,1.7,1.8,1.8],3.2,{align:['left','right','right','right','right']});}}
 
   /* 9. Pendências */
   {const s=novo();const lim30=addDays(hoje,30);
@@ -1900,6 +1922,13 @@ async function gerarPPT(){
    SISTEMA: notas da versão, log de alterações, backups e administração
    ===================================================================== */
 const NOTAS=[
+  {v:'2.1',data:'18/11/2026',titulo:'Indicadores: opção Não se aplica',itens:[
+    'Na tela de indicadores, cada grupo (Público, Geração de empregos, Redes sociais, Visibilidade e negócios) pode ser marcado como Não se aplica.',
+    'O grupo marcado sai das médias da carteira, dos totais de resultado e do relatório em PowerPoint. Os demais grupos do evento continuam valendo.',
+    'Botão Nenhum se aplica, para eventos sem indicadores, como muitas Pequenas Despesas. Ao salvar, a pendência Preencher indicadores é concluída.',
+    'Novo filtro Não se aplica na tela de indicadores, para a gestão revisar esses eventos. Cada marcação fica registrada no log.',
+    'Valores zero continuam valendo zero: nada foi convertido automaticamente. Empregos por R$ 100 mil passa a considerar todo evento em que empregos se aplica, inclusive os com zero.',
+    'Nenhum dado existente foi alterado. Esta versão não precisa de ajuste de dados.']},
   {v:'2.0',data:'14/11/2026',titulo:'Segurança, backups e relatórios para a gestão',itens:[
     'Novo menu Sistema, com notas da versão, backups, log de alterações e administração.',
     'Backup automático diário (sobrescrito a cada dia), backup mensal guardado por 12 meses e backup automático antes de cada atualização de versão.',
@@ -2149,8 +2178,8 @@ function abasBackup(d,rotulo){
       totais:[['Total',' ','','','','','','','',ps.filter(p=>etapaN(p.etapa)!=='Cancelado').reduce((a,p)=>a+vP(p),0),'','','','','Cancelados não entram no total','']]},
     {name:'Rubricas',cols:[{h:'Projeto',w:42},{h:'Ano',w:7,t:'ano'},{h:'Natureza',w:30},{h:'UF',w:7},{h:'Período',w:10},{h:'Origem ou observação',w:50,t:'wrap'},{h:'Pequenas Despesas',w:12},{h:'Valor (R$)',w:16,t:'money'}],
       rows:ps.flatMap(p=>(p.rubricas||[]).map(r=>[p.nome,p.ano,(NATMAP[r.natureza]||{}).nome||r.natureza,r.uf||'Todas',r.periodo||'',r.obs||'',r.pd?'Sim':'Não',+r.valor||0]))},
-    {name:'Indicadores',cols:[{h:'Projeto',w:42},{h:'Público',w:11,t:'int'},{h:'Empregos diretos',w:11,t:'int'},{h:'Empregos indiretos',w:11,t:'int'},{h:'Instagram',w:11,t:'int'},{h:'YouTube',w:11,t:'int'},{h:'LinkedIn',w:11,t:'int'},{h:'Pessoas alcançadas',w:13,t:'int'},{h:'Matérias',w:10,t:'int'},{h:'Contatos comerciais',w:12,t:'int'},{h:'Investimento (R$)',w:16,t:'money'},{h:'Custo por participante (R$)',w:16,t:'money'},{h:'Preenchido em',w:12,t:'date'},{h:'Observações',w:50,t:'wrap'}],
-      rows:ps.filter(p=>p.indicadores&&p.indicadores.preenchidoEm).map(p=>{const i=p.indicadores,sg=i.seg||{},inv=vP(p);return[p.nome,i.publico,i.empregosDiretos,i.empregosIndiretos,sg.instagram,sg.youtube,sg.linkedin,i.alcance,i.midia,i.leads,inv,i.publico?inv/i.publico:'',i.preenchidoEm,i.obs||''];})},
+    {name:'Indicadores',cols:[{h:'Projeto',w:42},{h:'Público',w:11,t:'int'},{h:'Empregos diretos',w:11,t:'int'},{h:'Empregos indiretos',w:11,t:'int'},{h:'Instagram',w:11,t:'int'},{h:'YouTube',w:11,t:'int'},{h:'LinkedIn',w:11,t:'int'},{h:'Pessoas alcançadas',w:13,t:'int'},{h:'Matérias',w:10,t:'int'},{h:'Contatos comerciais',w:12,t:'int'},{h:'Investimento (R$)',w:16,t:'money'},{h:'Custo por participante (R$)',w:16,t:'money'},{h:'Não se aplica',w:30,t:'wrap'},{h:'Preenchido em',w:12,t:'date'},{h:'Observações',w:50,t:'wrap'}],
+      rows:ps.filter(p=>p.indicadores&&p.indicadores.preenchidoEm).map(p=>{const i=p.indicadores,sg=i.seg||{},inv=vP(p);return[p.nome,i.publico,i.empregosDiretos,i.empregosIndiretos,sg.instagram,sg.youtube,sg.linkedin,i.alcance,i.midia,i.leads,inv,i.publico&&!naGrupo(i,'publico')?inv/i.publico:'',naTexto(i),i.preenchidoEm,i.obs||''];})},
     {name:'Pendências',cols:[{h:'Projeto',w:42},{h:'Pendência',w:36},{h:'Data',w:12,t:'date'},{h:'Situação',w:12},{h:'Tipo',w:14}],
       rows:ps.flatMap(p=>(p.pendencias||[]).map(x=>[p.nome,x.titulo,x.data,x.feita?'Concluída':(x.data<today()?'Atrasada':'Aberta'),x.obrigatoria?'Obrigatória':(x.auto?'Automática':'Manual')]))},
     {name:'Orçamento',cols:[{h:'Ano',w:8,t:'ano'},{h:'Data',w:12,t:'date'},{h:'Tipo',w:20},{h:'Valor (R$)',w:18,t:'money'},{h:'Justificativa',w:70,t:'wrap'}],
@@ -2395,11 +2424,15 @@ const ACT={
   'ind-go':t=>{UI.indSel=t.dataset.id;UI.indDraft=null;const p=proj(t.dataset.id);UI.indF=indPreenchido(p)?'ok':indDevido(p)?'pend':'fut';go('indicadores');},
   'ind-sel':t=>{UI.indSel=t.dataset.id;UI.indDraft=null;renderView();if(innerWidth<1100)$('#indform')?.scrollIntoView({behavior:'smooth'});},
   'ind-f':t=>{UI.indF=t.dataset.k;renderView();},
+  'ind-na-todos':t=>{if(!UI.indDraft)return;const v=t.dataset.v==='1';GRUPOS_IND.forEach(g=>UI.indDraft.na[g.k]=v);const f=$('#indform'),p=proj(UI.indSel);if(f&&p)f.innerHTML=indForm(p);if(v)toast('Todos os grupos marcados. Clique em salvar para concluir a pendência');},
   'ind-save':t=>{const p=proj(t.dataset.id),d=UI.indDraft;
-    if(d.publico===''||d.publico==null){toast('Informe o público do evento');$('[data-ind="publico"]')?.focus();return;}
-    const num=v=>v===''||v==null?0:Math.max(0,+v);
-    p.indicadores={publico:num(d.publico),empregosDiretos:num(d.empregosDiretos),empregosIndiretos:num(d.empregosIndiretos),seg:{instagram:num(d.seg.instagram),youtube:num(d.seg.youtube),linkedin:num(d.seg.linkedin)},alcance:num(d.alcance),midia:num(d.midia),leads:num(d.leads),obs:d.obs||'',preenchidoEm:today(),por:S.usuario};
-    syncAuto(p);log(p,'Indicadores registrados');persist();UI.indDraft=null;render();toast('Indicadores salvos');},
+    const na=d.na||{};
+    if(!na.publico&&(d.publico===''||d.publico==null)){toast('Informe o público do evento ou marque Não se aplica');$('[data-ind="publico"]')?.focus();return;}
+    const num=v=>v===''||v==null?0:Math.max(0,+v),N=(g,v)=>na[g]?null:num(v);
+    const naObj={};GRUPOS_IND.forEach(g=>{if(na[g.k])naObj[g.k]=true;});
+    p.indicadores={publico:N('publico',d.publico),empregosDiretos:N('empregos',d.empregosDiretos),empregosIndiretos:N('empregos',d.empregosIndiretos),seg:{instagram:N('redes',d.seg.instagram),youtube:N('redes',d.seg.youtube),linkedin:N('redes',d.seg.linkedin)},alcance:N('visib',d.alcance),midia:N('visib',d.midia),leads:N('visib',d.leads),obs:d.obs||'',preenchidoEm:today(),por:S.usuario};
+    if(Object.keys(naObj).length)p.indicadores.na=naObj;
+    syncAuto(p);log(p,'Indicadores registrados'+(Object.keys(naObj).length?` (não se aplica: ${naTexto(p.indicadores)})`:''));persist();UI.indDraft=null;render();toast('Indicadores salvos');},
   'cal-mv':t=>{const[y,m]=UI.cal.split('-').map(Number);const d=new Date(y,m-1+(+t.dataset.n),1);UI.cal=iso(d).slice(0,7);renderView();},
   'cal-today':()=>{UI.cal=today().slice(0,7);UI.calSel=today();renderView();},
   'cal-day':t=>{UI.calSel=t.dataset.d;renderView();},
@@ -2486,6 +2519,7 @@ function onField(e){
   if(ds.calf!==undefined&&e.type==='change'){UI.calf[ds.calf]=t.type==='checkbox'?t.checked:t.value;renderView();return;}
   if(ds.rel!==undefined&&e.type==='change'){UI.rel[ds.rel]=t.value;if(ds.rel==='per'&&t.value==='mes'&&!UI.rel.mes)UI.rel.mes=(S.anoAtivo===+today().slice(0,4)?today().slice(0,7):S.anoAtivo+'-12');renderView();return;}
   if(ds.logf!==undefined){SIS.logF[ds.logf]=t.value;if(ds.logf!=='q'||e.type==='input'){const v=$('#view');if(v){const pos=t.selectionStart;v.innerHTML=VIEW_FN.sistema();const n=$(`[data-logf="${ds.logf}"]`);if(n&&ds.logf==='q'){n.focus();try{n.setSelectionRange(pos,pos);}catch(x){}}}}return;}
+  if(ds.indna!==undefined&&UI.indDraft){if(e.type!=='change')return;UI.indDraft.na[ds.indna]=t.checked;const f=$('#indform'),p=proj(UI.indSel);if(f&&p)f.innerHTML=indForm(p);return;}
   if(ds.ind!==undefined&&UI.indDraft){const k=ds.ind.split('.');if(k.length>1)UI.indDraft[k[0]][k[1]]=t.value;else UI.indDraft[k[0]]=t.value;
     const p=proj(UI.indSel),c=$('#indcalc');if(p&&c&&ds.ind!=='obs')c.innerHTML=calcHTML(p,UI.indDraft);return;}
   if(ds.ano!==undefined&&e.type==='change'){S.anoAtivo=+t.value;savePrefs({ano:S.anoAtivo});if(!CLOUD)persist();render();return;}
